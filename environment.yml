@@ -1,0 +1,10 @@
+name: may-pagasa-ph
+channels:
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - pdfplumber
+  - python=3
+  - jupyter
+prefix: /home/oz/miniconda3/envs/may-pagasa-ph
