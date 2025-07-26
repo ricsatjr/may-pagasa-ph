@@ -10,8 +10,11 @@
 # Working versions must document the coverage dates of successfully parsed weather advisory pdfs.
 # 
 # - version date: 2025-07-26
-#   - valid for weather advisories from July 15 to 25 2025
-#   - error if pdf is image file (no text being recognized) (case: Advisory 7 and 32 of July 15 2025 advisory series)
+#   - valid for weather advisories from May 22 to July 25 2025
+#   - error if pdf is image file (no text being recognized)
+#   - - cases:
+#     - - Advisory 7 and 32 of July 15 2025 advisory series
+#       - Advisory 1, 4,5,6,7, 10 of July 2 2025 advisory series
 #   - error if table has no column for potential impacts (case: Advisory 15,16 of May 29 2025 advisory series)
 
 # # import libraries
@@ -226,7 +229,7 @@ def compare_periods(result: Dict[str, Any]) -> None:
 
 # # Core functions
 
-# In[33]:
+# In[38]:
 
 
 class EnhancedPAGASAParser:
