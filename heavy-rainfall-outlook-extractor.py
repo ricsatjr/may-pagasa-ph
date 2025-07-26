@@ -10,7 +10,9 @@
 # Working versions must document the coverage dates of successfully parsed weather advisory pdfs.
 # 
 # - version date: 2025-07-26
-# - - valid for weather advisories from July 15 to 25 2025 (except for non-parsable image-type pdfs)
+#   - valid for weather advisories from July 15 to 25 2025
+#   - error if pdf is image file (no text being recognized) (case: Advisory 7 and 32 of July 15 2025 advisory series)
+#   - error if table has no column for potential impacts (case: Advisory 15,16 of May 29 2025 advisory series)
 
 # # import libraries
 
@@ -224,7 +226,7 @@ def compare_periods(result: Dict[str, Any]) -> None:
 
 # # Core functions
 
-# In[14]:
+# In[33]:
 
 
 class EnhancedPAGASAParser:
@@ -393,28 +395,43 @@ class EnhancedPAGASAParser:
         # Extract rainfall data from table rows
         data_rows = table_data[2:] if len(table_data) > 2 else []
 
+
         for row in data_rows:
             if not row or len(row) < 2:
                 continue
 
+
             # Determine rainfall category from first column
             rainfall_marker = row[0].strip()
 
-            if re.search(r'\(>200\s*mm\)', rainfall_marker):
+            # if re.search(r'\(>200\s*mm\)', rainfall_marker):
+            #     category = "above_200mm"
+            # elif re.search(r'\(100\s*[–-]\s*200\s*mm\)', rainfall_marker):
+            #     category = "100_to_200mm"
+            # elif re.search(r'\(50\s*[–-]\s*100\s*mm\)', rainfall_marker):
+            #     category = "50_to_100mm"
+
+
+
+            if re.search(r'\(?>200\s*mm\)?', rainfall_marker):
                 category = "above_200mm"
-            elif re.search(r'\(100\s*[–-]\s*200\s*mm\)', rainfall_marker):
+            elif re.search(r'\(?100\s*[–-]\s*200\s*mm\)?', rainfall_marker):
                 category = "100_to_200mm"
-            elif re.search(r'\(50\s*[–-]\s*100\s*mm\)', rainfall_marker):
+            elif re.search(r'\(?50\s*[–-]\s*100\s*mm\)?', rainfall_marker):
                 category = "50_to_100mm"
             else:
+                print("---------------------CHECK: ", "rainfall categories not detected")
                 continue  # Not a rainfall category row
 
             # Extract locations for each time period column
+
             for col_idx in range(1, min(len(row), len(periods_info) + 1)):
                 period_key = f"period_{col_idx}"
 
                 if period_key in forecast_periods and col_idx < len(row):
+
                     locations_text = row[col_idx].strip()
+
 
                     if locations_text and locations_text != '-':
                         locations = self._parse_locations(locations_text)
@@ -449,6 +466,8 @@ class EnhancedPAGASAParser:
 
     def _parse_locations(self, text: str) -> List[str]:
         """Parse location names from text"""
+
+
         if not text or text.strip() == '-':
             return []
 
@@ -462,6 +481,7 @@ class EnhancedPAGASAParser:
         parts = re.split(r',|\sand\s', text)
 
         for part in parts:
+
             part = part.strip()
             if part and len(part) > 2 and part != '-':
                 # Remove common non-location artifacts
@@ -608,4 +628,10 @@ def main(source_folder='hro-pdfs',dest_folder='hro-jsons'):
 
 if __name__ == "__main__":
      main()
+
+
+# In[ ]:
+
+
+
 
