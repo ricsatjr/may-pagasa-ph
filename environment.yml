@@ -7,4 +7,6 @@ dependencies:
   - pdfplumber
   - python=3
   - jupyter
+  - pandas
+  - matplotlib
 prefix: /home/oz/miniconda3/envs/may-pagasa-ph
