@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[17]:
+# In[3]:
 
 
 import json
@@ -24,7 +24,9 @@ import pytz
 
 
 
-# In[12]:
+# # Generic functions
+
+# In[4]:
 
 
 def read_json_file(file_path):
@@ -84,7 +86,7 @@ def set_datetime_ticks(ax,major=8,minor_every=3):
 
 # # HEAVY RAINFALL OUTLOOK FUNCTIONS
 
-# In[40]:
+# In[26]:
 
 
 def extract_all_unique_areas(data):
@@ -332,8 +334,8 @@ def process_area_records_for_plotting(area_records, area_name):
                 'end_time': end_time,
                 'duration_hours': 24
             })
-
-    return plot_segments
+    # Convert to DataFrame for easier filtering if needed
+    return pd.DataFrame(plot_segments)
 
 def create_rainfall_color_map():
     """
@@ -345,30 +347,21 @@ def create_rainfall_color_map():
     color_map = {
         # Red for >200mm
         'above_200mm': '#FF0000',        # Red (alternative naming)
-
         # Orange for 100-200mm range  
         '100_to_200mm': '#FF8C00',       # Dark Orange
-
         # Yellow for 50-100mm range
         '50_to_100mm': '#FFD700',        # Gold/Yellow
-
-        # # Light colors for lower ranges (if they exist)
-        # '5_to_15mm': '#E6F3FF',          # Very light blue
-        # '15_to_30mm': '#CCE7FF',         # Light blue  
-        # '30_to_60mm': '#99D6FF',         # Medium light blue
-        # '60_to_120mm': '#66C2FF',        # Medium blue
-
         # Gray for None values
         None: '#808080'                   # Gray
     }
     return color_map
 
-def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, ax=None,linewidth=8):
+def plot_hro_timeline(plot_data, area_filter=None, period_filter=None, ax=None,linewidth=8):
     """
     Create a timeline plot showing rainfall periods for different advisories.
 
     Args:
-        plot_segments: List of dictionaries from process_area_records_for_plotting()
+        plot_data: dataframe from process_area_records_for_plotting()
         area_filter: List of area names to include (None for all areas)
         period_filter: List of periods to include, e.g., ['period_1', 'period_3'] (None for all periods)
         figsize: Tuple for figure size
@@ -376,8 +369,8 @@ def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, ax=No
     Returns:
         matplotlib figure and axes objects
     """
-    # Convert to DataFrame for easier filtering if needed
-    plot_data = pd.DataFrame(plot_segments)
+
+
 
     if area_filter and not plot_data.empty:
         plot_data = plot_data[plot_data['area'].isin(area_filter)]
@@ -417,7 +410,7 @@ def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, ax=No
                 label = category.replace("_"," ").replace("mm","") if category else 'below 50'
                 legend_elements.append(plt.Line2D([0], [0], color=color, lw=4, label=label))
 
-    ax.legend(title='1-day forecast rain (mm)',handles=legend_elements, bbox_to_anchor=(0.75, 1), loc='upper left')
+    ax.legend(title='1-day forecast rain (mm)',handles=legend_elements, loc='center left')
     ax.invert_yaxis()
 
     plt.tight_layout()
@@ -429,7 +422,7 @@ def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, ax=No
 
 # # OGIMET
 
-# In[48]:
+# In[80]:
 
 
 def get_date_bounds(deltadays=7,now=True):
@@ -559,6 +552,8 @@ def plot_oneday_rain(df,ax=None,tz='Asia/Manila',cumulative=False):
     dftoplot = df.copy()
     dftoplot.index = dftoplot.index.tz_convert(tz)
 
+    print(dftoplot)
+
 
     # Identify NaN values
     nan_mask = dftoplot['rain'].isna()
@@ -653,27 +648,22 @@ def plot_oneday_rain(df,ax=None,tz='Asia/Manila',cumulative=False):
 
 
 
-def get_axis_date_strings(ax, subtract_days_from_min=2):
+def get_ogimet_time_bounds(x_min_dt,x_max_dt, subtract_days_from_min=2):
     """
-    Get matplotlib x-axis min and max dates, convert to GMT+8, 
-    subtract specified days from min date, and return as strings.
+    Get ogimet time bounds for download using two input datetime (with tz), and an offset for the minimum date.
 
     Parameters:
-    ax: matplotlib axis object
-    subtract_days_from_min: int, number of days to subtract from min date (default: 2)
+    x_min_dt, x_max_dt: datetime objects with timezone
+    subtract_days_from_min: int, number of days to subtract from x_min_dt (default: 2)
 
     Returns:
     tuple: (min_date_string, max_date_string) in format 'YYYYMMDDHHMM'
     """
-    # Define GMT+8 timezone
-    gmt_plus_8 = pytz.timezone('Asia/Shanghai')
 
-    # Get x-axis limits as matplotlib date numbers
-    x_min, x_max = ax.get_xlim()
 
-    # Convert back to datetime objects and localize to GMT+8
-    x_min_dt = mdates.num2date(x_min)-dt.timedelta(hours=8)
-    x_max_dt = mdates.num2date(x_max)-dt.timedelta(hours=8)
+    # Convert to UTC which is ogimet standard time
+    x_min_dt=x_min_dt.tz_convert('UTC')
+    x_max_dt=x_max_dt.tz_convert('UTC')
 
     # Subtract days from min date
     x_min_dt_adjusted = x_min_dt - timedelta(days=subtract_days_from_min)
@@ -681,13 +671,33 @@ def get_axis_date_strings(ax, subtract_days_from_min=2):
     # Convert to string format YYYYMMDDHHMM
     x_min_str = x_min_dt_adjusted.strftime('%Y%m%d%H%M')
     x_max_str = x_max_dt.strftime('%Y%m%d%H%M')
-
+    print(x_min_str)
     return x_min_str, x_max_str
 
+def set_ticks_at_hour(ax, target_hour=8,tz='Asia/Manila'):
+    """Set major ticks at a specific hour each day"""
+    xlims = ax.get_xlim()
+    start_time = mdates.num2date(xlims[0])
+    end_time = mdates.num2date(xlims[1])
+    print(start_time)
+
+    # If you want to be more explicit about the range
+    start_time = pd.Timestamp(start_time).floor('D').tz_convert(tz)  # Start at beginning of first day
+    end_time = pd.Timestamp(end_time).ceil('D').tz_convert(tz)       # End at beginning of day after last day
+
+    # Generate the range and filter
+    hourly_range = pd.date_range(start=start_time, end=end_time, freq='h')
+    ticks_at_target_hour = hourly_range[hourly_range.hour == target_hour]
 
 
 
-def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(8,10)):
+    ax.set_xticks(ticks_at_target_hour)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter(f'%m/%d\n%H:00',tz=tz))
+
+
+
+
+def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(12,10)):
     # extract advisory series json data
     data = read_json_file(series_json_path)
     # show all areas covered
@@ -706,28 +716,31 @@ def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(8,10)):
 
     plt.close("all")
     fig,ax=plt.subplots(nrows=2,sharex=True,figsize=figsize)
-    plot_hro_timeline(hro_segments, area_filter=None, ax=ax[1],linewidth=4)#,period_filter=['period_1'])
-
-    # Customize plot - y-axis now uses integer values
-    ax[1].set_xlabel('Time')
-    ax[1].set_ylabel('Advisory ID')
-    set_datetime_ticks(ax[1],major=8,minor_every=6)
-    ax[1].grid(axis='x',which='major',ls=':')
+    plot_hro_timeline(hro_segments, area_filter=None, ax=ax[1],linewidth=4,period_filter=['period_1'])
 
 
 
 
 
-    # ACTUAL RAIN FROM OGIMET
-    begin_str,end_str=get_axis_date_strings(ax[1], subtract_days_from_min=2)
+    # # ACTUAL RAIN FROM OGIMET
+    begin_str,end_str=get_ogimet_time_bounds(hro_segments['start_time'].min(),hro_segments['end_time'].max(), subtract_days_from_min=2)
     synop_data=download_synop_from_ogimet(begin_str,end_str,wmo_code)
     synop_data.splitlines()
     df=parse_synop(synop_data)
     onedayrain_df=get_one_day_rain(df)
 
     plot_oneday_rain(onedayrain_df,ax=ax[0])
-    set_datetime_ticks(ax[0],major=8,minor_every=6)
+
+
+    # Customize plot - y-axis now uses integer values
+    ax[1].set_xlabel('Date')
+    ax[1].set_ylabel('Advisory ID')
+    set_ticks_at_hour(ax[1], target_hour=8)
+    ax[1].grid(axis='x',which='major',ls=':')
     ax[0].grid(axis='x',which='major',ls=':')
+
+    plt.tight_layout()
+    plt.savefig(f'forecast-vs-actual-rains-{which_place}-{sta_name}.png', dpi=600)
 
 
 
@@ -736,27 +749,10 @@ def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(8,10)):
 
 # # MAIN
 
-# In[49]:
+# In[81]:
 
 
-create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15.json',98328,'Baguio City',figsize=(7,8))
-
-
-# wmo_code,actual_area=98324, 'Iba'
-# # wmo_code,actual_area=98233, 'Tuguegarao City'
-# # wmo_code,actual_area=98433, 'Tanay'
-# wmo_code,actual_area=98223,'Laoag City'
-# # wmo_code,actual_area=98325,'Dagupan City'
-# # wmo_code,actual_area=98430,'Science Garden, Quezon City'
-# wmo_code,actual_area=98328,'Baguio City' #wmo code for baguio station
-
-
-# end_str,begin_str=get_date_bounds(deltadays=8)
-# synop_data=download_synop_from_ogimet(begin_str,end_str,wmo_code)
-# synop_data.splitlines()
-# df=parse_synop(synop_data)
-# onedayrain_df=get_one_day_rain(df)
-# plot_oneday_rain(onedayrain_df,ax=None)
+create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15.json',98328,'Baguio City',figsize=(10,10))
 
 
 # In[ ]:
