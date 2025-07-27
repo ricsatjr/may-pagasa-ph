@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[107]:
+# In[17]:
 
 
 import json
@@ -14,7 +14,17 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import FixedLocator
 
 
-# In[121]:
+import numpy as np
+from pymetdecoder import synop as s
+import urllib
+from matplotlib.patches import Rectangle
+import datetime as dt
+
+import pytz
+
+
+
+# In[12]:
 
 
 def read_json_file(file_path):
@@ -74,7 +84,7 @@ def set_datetime_ticks(ax,major=8,minor_every=3):
 
 # # HEAVY RAINFALL OUTLOOK FUNCTIONS
 
-# In[137]:
+# In[40]:
 
 
 def extract_all_unique_areas(data):
@@ -353,7 +363,7 @@ def create_rainfall_color_map():
     }
     return color_map
 
-def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, figsize=(15, 10),linewidth=8):
+def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, ax=None,linewidth=8):
     """
     Create a timeline plot showing rainfall periods for different advisories.
 
@@ -377,7 +387,7 @@ def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, figsi
 
     color_map = create_rainfall_color_map()
 
-    fig, ax = plt.subplots(figsize=figsize)
+
 
     # Plot each segment as a horizontal line with endpoint markers
     for _, row in plot_data.iterrows():
@@ -389,8 +399,8 @@ def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, figsi
                 color=color, linewidth=linewidth, solid_capstyle='butt')
 
         # Add black dots at endpoints
-        ax.plot(row['start_time'], y_pos, 'k|', markersize=4)  # Start point
-        ax.plot(row['end_time'], y_pos, 'k|', markersize=4)    # End point
+        ax.plot(row['start_time'], y_pos, marker='.',c='0.5',alpha=0.3)  # Start point
+        ax.plot(row['end_time'], y_pos, marker='.',c='0.5',alpha=0.3)    # End point
 
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.grid(axis='y',ls=':')
@@ -411,9 +421,273 @@ def plot_hro_timeline(plot_segments, area_filter=None, period_filter=None, figsi
     ax.invert_yaxis()
 
     plt.tight_layout()
-    return fig, ax
+    return plt.gcf(), ax
 
-def create_hro_analysis(series_json_path,figsize=(9,5)):
+
+
+
+
+# # OGIMET
+
+# In[48]:
+
+
+def get_date_bounds(deltadays=7,now=True):
+    """
+    Generate date bounds for data download
+    Args:
+      deltadays: number of days to subtract from current date
+      now: current date
+    Returns: tuple of date strings
+    """
+    if now:
+        now=dt.datetime.now()
+    else:
+        now=dt.datetime.strptime(now,"%Y-%m-%d")
+
+    now_str=now.strftime("%Y%m%d%H%M")
+
+    now_tdelta=now-dt.timedelta(days=deltadays)
+
+    now_tdelta_str=now_tdelta.strftime("%Y%m%d%H%M")
+    return now_str,now_tdelta_str
+
+def download_synop_from_ogimet(begin_str,end_str, wmo_code=98328):
+
+    url="https://www.ogimet.com/cgi-bin/getsynop?block="+str(wmo_code)+"&begin="+begin_str+"&end="+end_str
+    print("Downloading from",url)
+    response = urllib.request.urlopen(url)
+    data = response.read().decode()
+
+    return data
+
+def parse_synop(data):
+
+    rows=data.splitlines()
+    df=pd.DataFrame(columns=['wmo_code','datetime','sealevelpressure','winddir','windval','windunit','rain','rainunit','rainobstime','rainobstimeunit'])
+
+    i=0
+    for r in rows:
+        if i==0:
+            i+=1
+            continue
+        # split row based on delimiter, get last element, decode, and append to list
+        c=r.split(",")
+        decode=s.SYNOP().decode(c[-1])
+
+        # print(c[-1])
+
+        # extract sea level pressure
+        try:
+            sealevelpressure=decode['sea_level_pressure']['value']
+        except:
+            sealevelpressure=np.nan
+        # extract wind direction
+        try:
+            winddir=decode['surface_wind']['direction']['value']
+            if winddir==None:
+                winddir=np.nan
+        except:
+            winddir=np.nan
+        try:
+            windval=decode['surface_wind']['speed']['value']
+            windval_unit=decode['surface_wind']['speed']['unit']
+        except:
+
+            winddir=np.nan
+            windval=np.nan
+            windval_unit=None
+
+
+        try:
+            rain=decode['precipitation_s1']['amount']['value']
+            rain_unit=decode['precipitation_s1']['amount']['unit']
+            obs_time=decode['precipitation_s1']['time_before_obs']['value']
+            obs_time_unit=decode['precipitation_s1']['time_before_obs']['unit']
+        except:
+            rain=np.nan
+            rain_unit=None
+            obs_time=np.nan
+            obs_time_unit=None
+        try:
+            dfrow=[int(c[0]),
+            pd.to_datetime(c[1]+"-"+c[2]+"-"+c[3]+" "+c[4]+":"+c[5]),
+                   float(sealevelpressure),
+                   float(winddir),float(windval),windval_unit,
+                   float(rain),rain_unit,float(obs_time),obs_time_unit]
+        except:
+            print(decode)
+
+        # append row to df
+        df.loc[len(df)]=dfrow
+
+    df=df.set_index(['datetime'],drop=True)
+    df.index=pd.to_datetime(df.index)
+    df = df.tz_localize('GMT')
+
+    return df
+
+def get_one_day_rain(df):
+    onedayrain=df.loc[df['rainobstime']==24,'rain']
+    #fill missing dates
+    onedayrain_filled = onedayrain.resample('D').asfreq()
+    onedayrain_df = pd.DataFrame(onedayrain_filled)
+    onedayrain_df['cm_rain'] = onedayrain_df['rain'].fillna(0).cumsum()
+    onedayrain_df['cm_rain'] = onedayrain_df['cm_rain']-onedayrain_df['cm_rain'].iloc[0]
+    # Define the bins and labels for rain categories
+    rain_bins = [-float('inf'), 50, 100, 200, float('inf')]
+    rain_labels = ['<50mm rain', '50 to <100mm rain', '100 to <200mm rain', '>200mm rain']
+    rain_colors = ['gray', '#FFD700', '#FF8C00', '#FF0000']
+
+
+    # Create the 'rain_class' column using pd.cut
+    onedayrain_df['rain_class'] = pd.cut(onedayrain_df['rain'], bins=rain_bins, labels=rain_labels, right=False)
+
+    # Map the rain class to colors
+    color_map = dict(zip(rain_labels, rain_colors))
+    onedayrain_df['rain_color'] = onedayrain_df['rain_class'].map(color_map)
+
+    return onedayrain_df
+
+
+
+def plot_oneday_rain(df,ax=None,tz='Asia/Manila',cumulative=False):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Convert the DataFrame index to GMT+8
+    dftoplot = df.copy()
+    dftoplot.index = dftoplot.index.tz_convert(tz)
+
+
+    # Identify NaN values
+    nan_mask = dftoplot['rain'].isna()
+
+    # Replace NaN values with a small negative value for plotting (e.g., 5% of the max rain value)
+    max_rain = np.nanmax(dftoplot['rain'])
+    dftoplot.loc[nan_mask, 'rain'] = -0.05 * max_rain
+
+    # Add 'white' to the categories of 'rain_color' before assigning
+    dftoplot['rain_color'] = dftoplot['rain_color'].cat.add_categories('white')
+
+    # Set colors for NaN bars
+    dftoplot.loc[nan_mask, 'rain_color'] = 'white'
+
+    # Plot the bars
+    plt.sca(ax)
+    bars = plt.bar(dftoplot.index, dftoplot['rain'], width=-1.0, align='edge', color=dftoplot['rain_color'],alpha=0.5)
+
+    # Set edge color for NaN bars
+    for i, bar in enumerate(bars):
+        # if nan_mask.iloc[i]:
+        bar.set_edgecolor('k')
+        if nan_mask.iloc[i]:
+            bar.set_linestyle('--')
+
+
+
+
+
+    # Create all legend elements
+    legend_elements = [
+        Rectangle((0, 0), 1, 1, facecolor='#FF0000', edgecolor='gray',label='above 200'),
+        Rectangle((0, 0), 1, 1, facecolor='#FF8C00', edgecolor='gray',label='100 to 200'),
+        Rectangle((0, 0), 1, 1, facecolor='#FFD700', edgecolor='gray',label='50 to 100'),
+        Rectangle((0, 0), 1, 1, facecolor='gray', edgecolor='gray',label='below 50'),
+        Rectangle((0, 0), 1, 1, facecolor='white', edgecolor='black', linestyle=':', label='no data'),
+        ]
+
+
+
+    ax.legend(handles=legend_elements, title="1-day actual rain (mm)", loc='upper left')
+
+
+
+    ##########################################
+    # CUMULATIVE RAIN LINE PLOT
+    # Iterate through the DataFrame to plot segments
+    ax2=ax.twinx()
+    for i in range(len(dftoplot) - 1):
+        # Get the current and next data points
+        point1 = dftoplot.iloc[i]
+        point2 = dftoplot.iloc[i+1]
+
+        # Determine line color from the rain_color of the next point
+        line_color = 'gray'
+
+        # Determine line style based on rain value of the current point
+        line_style = '--' if pd.isna(dftoplot.iloc[i]['rain']) else '-' # Use original df for NaN check
+
+        # Determine marker based on rain value of the current point
+        marker = None if pd.isna(dftoplot.iloc[i]['rain']) else 'o' # Use original df for NaN check
+
+
+        # Plot the line segment
+        ax2.plot([point1.name, point2.name], [point1['cm_rain'], point2['cm_rain']],
+                color=line_color, linestyle=line_style, marker='o',ms='10')
+
+    ax2.set_ylim(bottom=0)
+
+    # Get existing legend handles and labels
+    existing_handles, existing_labels = ax2.get_legend_handles_labels()
+
+    # Create new legend elements for rainfall
+    rain_legend_elements = [
+        plt.Line2D([0], [0], color='gray', lw=2, marker='o',label='cumulative rain'),
+        plt.Line2D([0], [0], color='gray', linestyle='--', lw=2, label='no data')
+    ]
+
+    # Combine existing and new legend elements
+    all_handles = rain_legend_elements
+    all_labels = [elem.get_label() for elem in rain_legend_elements]
+    print(all_labels)
+
+    ax2.legend(handles=all_handles, labels=all_labels, loc='upper center')
+
+    ax.set_ylabel(f'1-day actual rain (mm)')
+    ax2.set_ylabel(f'actual cumulative rain (mm)')
+
+
+    ############################################################################
+
+
+
+
+def get_axis_date_strings(ax, subtract_days_from_min=2):
+    """
+    Get matplotlib x-axis min and max dates, convert to GMT+8, 
+    subtract specified days from min date, and return as strings.
+
+    Parameters:
+    ax: matplotlib axis object
+    subtract_days_from_min: int, number of days to subtract from min date (default: 2)
+
+    Returns:
+    tuple: (min_date_string, max_date_string) in format 'YYYYMMDDHHMM'
+    """
+    # Define GMT+8 timezone
+    gmt_plus_8 = pytz.timezone('Asia/Shanghai')
+
+    # Get x-axis limits as matplotlib date numbers
+    x_min, x_max = ax.get_xlim()
+
+    # Convert back to datetime objects and localize to GMT+8
+    x_min_dt = mdates.num2date(x_min)-dt.timedelta(hours=8)
+    x_max_dt = mdates.num2date(x_max)-dt.timedelta(hours=8)
+
+    # Subtract days from min date
+    x_min_dt_adjusted = x_min_dt - timedelta(days=subtract_days_from_min)
+
+    # Convert to string format YYYYMMDDHHMM
+    x_min_str = x_min_dt_adjusted.strftime('%Y%m%d%H%M')
+    x_max_str = x_max_dt.strftime('%Y%m%d%H%M')
+
+    return x_min_str, x_max_str
+
+
+
+
+def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(8,10)):
     # extract advisory series json data
     data = read_json_file(series_json_path)
     # show all areas covered
@@ -424,25 +698,65 @@ def create_hro_analysis(series_json_path,figsize=(9,5)):
     which_place=unique_area_dict[int(input("Type number of area to analyze: "))]
     area_records=extract_area_records(data, which_place)
     hro_segments=process_area_records_for_plotting(area_records, which_place)
+
+
+
+
+
+
     plt.close("all")
-    fig,ax=plot_hro_timeline(hro_segments, area_filter=None, figsize=figsize,linewidth=8)#,period_filter=['period_1'])
+    fig,ax=plt.subplots(nrows=2,sharex=True,figsize=figsize)
+    plot_hro_timeline(hro_segments, area_filter=None, ax=ax[1],linewidth=4)#,period_filter=['period_1'])
+
     # Customize plot - y-axis now uses integer values
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Advisory ID')
-    set_datetime_ticks(ax,major=8,minor_every=6)
-    ax.grid(axis='x',which='major',ls=':')
-    # Rotate x-axis labels for better readability
-    # plt.xticks(rotation=45)
+    ax[1].set_xlabel('Time')
+    ax[1].set_ylabel('Advisory ID')
+    set_datetime_ticks(ax[1],major=8,minor_every=6)
+    ax[1].grid(axis='x',which='major',ls=':')
+
+
+
+
+
+    # ACTUAL RAIN FROM OGIMET
+    begin_str,end_str=get_axis_date_strings(ax[1], subtract_days_from_min=2)
+    synop_data=download_synop_from_ogimet(begin_str,end_str,wmo_code)
+    synop_data.splitlines()
+    df=parse_synop(synop_data)
+    onedayrain_df=get_one_day_rain(df)
+
+    plot_oneday_rain(onedayrain_df,ax=ax[0])
+    set_datetime_ticks(ax[0],major=8,minor_every=6)
+    ax[0].grid(axis='x',which='major',ls=':')
+
+
+
 
 
 
 # # MAIN
 
-# In[139]:
+# In[49]:
 
 
-create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15.json')
+create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15.json',98328,'Baguio City',figsize=(7,8))
 
+
+# wmo_code,actual_area=98324, 'Iba'
+# # wmo_code,actual_area=98233, 'Tuguegarao City'
+# # wmo_code,actual_area=98433, 'Tanay'
+# wmo_code,actual_area=98223,'Laoag City'
+# # wmo_code,actual_area=98325,'Dagupan City'
+# # wmo_code,actual_area=98430,'Science Garden, Quezon City'
+# wmo_code,actual_area=98328,'Baguio City' #wmo code for baguio station
+
+
+# end_str,begin_str=get_date_bounds(deltadays=8)
+# synop_data=download_synop_from_ogimet(begin_str,end_str,wmo_code)
+# synop_data.splitlines()
+# df=parse_synop(synop_data)
+# onedayrain_df=get_one_day_rain(df)
+# plot_oneday_rain(onedayrain_df,ax=None)
 
 
 # In[ ]:
