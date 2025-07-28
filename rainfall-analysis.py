@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[3]:
+# In[1]:
 
 
 import json
@@ -26,7 +26,7 @@ import pytz
 
 # # Generic functions
 
-# In[4]:
+# In[2]:
 
 
 def read_json_file(file_path):
@@ -86,7 +86,7 @@ def set_datetime_ticks(ax,major=8,minor_every=3):
 
 # # HEAVY RAINFALL OUTLOOK FUNCTIONS
 
-# In[26]:
+# In[3]:
 
 
 def extract_all_unique_areas(data):
@@ -422,7 +422,7 @@ def plot_hro_timeline(plot_data, area_filter=None, period_filter=None, ax=None,l
 
 # # OGIMET
 
-# In[80]:
+# In[36]:
 
 
 def get_date_bounds(deltadays=7,now=True):
@@ -705,7 +705,7 @@ def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(12,10)):
     unique_areas.sort()
     unique_area_dict={i:unique_areas[i] for i in range(len(unique_areas))}
     print(unique_area_dict)
-    which_place=unique_area_dict[int(input("Type number of area to analyze: "))]
+    which_place=unique_area_dict[int(input(f'Type number of province to analyze (for {sta_name}): '))]
     area_records=extract_area_records(data, which_place)
     hro_segments=process_area_records_for_plotting(area_records, which_place)
 
@@ -720,10 +720,10 @@ def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(12,10)):
 
 
 
-
-
     # # ACTUAL RAIN FROM OGIMET
-    begin_str,end_str=get_ogimet_time_bounds(hro_segments['start_time'].min(),hro_segments['end_time'].max(), subtract_days_from_min=2)
+    begin_str,end_str=get_ogimet_time_bounds(hro_segments['start_time'].min(),
+                                             pd.to_datetime(list(data.keys())[-1]), 
+                                             subtract_days_from_min=2)
     synop_data=download_synop_from_ogimet(begin_str,end_str,wmo_code)
     synop_data.splitlines()
     df=parse_synop(synop_data)
@@ -739,7 +739,9 @@ def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(12,10)):
     ax[1].grid(axis='x',which='major',ls=':')
     ax[0].grid(axis='x',which='major',ls=':')
 
+    plt.suptitle(f'Forecast ({which_place}) and actual ({sta_name}) rains') 
     plt.tight_layout()
+
     plt.savefig(f'forecast-vs-actual-rains-{which_place}-{sta_name}.png', dpi=600)
 
 
@@ -749,10 +751,18 @@ def create_hro_analysis(series_json_path,wmo_code,sta_name,figsize=(12,10)):
 
 # # MAIN
 
-# In[81]:
+# In[38]:
 
 
-create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15.json',98328,'Baguio City',figsize=(10,10))
+#create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98328,'Baguio City',figsize=(10,10))
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98325,'Dagupan City',figsize=(10,10))
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98324,'Iba',figsize=(10,10))
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98426,'Subic',figsize=(10,10))
+create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98430,'Science Garden, QC',figsize=(10,10))
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98433,'Tanay',figsize=(10,10))
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98432,'Ambulong',figsize=(10,10)) # batangas
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98531,'San Jose',figsize=(10,10)) # occidental mindoro
+# create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15-filled.json',98618,'Puerto Princesa City',figsize=(10,10))
 
 
 # In[ ]:
@@ -761,8 +771,20 @@ create_hro_analysis('hro-jsons/pagasa-hro-2025-07-15.json',98328,'Baguio City',f
 
 
 
-# In[ ]:
+# In[15]:
 
 
+data=read_json_file('hro-jsons/pagasa-hro-2025-07-15-filled.json')
 
+
+# In[28]:
+
+
+dt.datetime.fromisoformat(list(data.keys())[0])
+
+
+# In[29]:
+
+
+list(data.keys())[0]
 
