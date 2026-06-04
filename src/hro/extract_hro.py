@@ -109,12 +109,12 @@ def _iso(dt: datetime) -> str:
 def _is_known_location(name: str) -> bool:
     """
     Return True if name (after stripping any modifier) is recognised by the
-    gazetteer. Used only for the unrecognised_location warning; modifiers are
+    locations_reference. Used only for the unrecognised_location warning; modifiers are
     kept as part of the location string in the output.
     """
     m = MODIFIER_PATTERN.match(name)
     base = _normalise(m.group(2)) if m else name
-    return gazetteer.is_known(base)
+    return _loc_is_known(base)
 
 
 def _parse_locations(cell_text: str) -> List[str]:
