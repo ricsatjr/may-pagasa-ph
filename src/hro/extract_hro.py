@@ -41,6 +41,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pdfplumber
+
+# Add utils/ to path so location_reference can be imported
+# regardless of where the script is called from
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
 from location_reference import is_known as _loc_is_known
 from location_reference import log_unresolved as _log_unresolved
@@ -108,9 +111,9 @@ def _iso(dt: datetime) -> str:
 
 def _is_known_location(name: str) -> bool:
     """
-    Return True if name (after stripping any modifier) is recognised by the
-    locations_reference. Used only for the unrecognised_location warning; modifiers are
-    kept as part of the location string in the output.
+    Return True if name (after stripping any modifier) is recognised by
+    location_reference. Used only for the unrecognised_location warning;
+    modifiers are kept as part of the location string in the output.
     """
     m = MODIFIER_PATTERN.match(name)
     base = _normalise(m.group(2)) if m else name
@@ -243,13 +246,17 @@ class PAGASAHROParser:
             existing JSON. Use when reprocessing a complete series.
 
         Incremental mode (incremental=True):
-            Loads the existing series JSON (the most recent .json in dst_folder),
-            skips PDFs whose original filename already appears in source_log,
-            parses only new PDFs, renames and moves each to processed_folder,
-            then merges results and rewrites the JSON.
+            Loads the existing series JSON from dst_folder/current_event/.
+            If that series is final, archives it to dst_folder/past_events/
+            and starts a new series. Otherwise merges new advisories in.
+            Renames and moves each parsed PDF to processed_folder.
 
             Rename convention:  YYYYMMDD_HHMM_ADVxxx.pdf
                                 YYYYMMDD_HHMM_ADVxxxF.pdf  (final advisory)
+
+            Folder layout under dst_folder:
+                current_event/  active series JSON
+                past_events/    completed series JSONs
 
         Args:
             src_folder:        Folder containing incoming advisory PDFs.
@@ -265,8 +272,21 @@ class PAGASAHROParser:
         os.makedirs(processed_folder, exist_ok=True)
 
         # --- Load existing series state (incremental) or start fresh ---
+        # Folder layout under dst_folder:
+        #   current_event/  — the active series JSON (at most one at a time)
+        #   past_events/    — completed series JSONs, moved here when is_final=True
+        current_folder = os.path.join(dst_folder, "current_event")
+        archive_folder = os.path.join(dst_folder, "past_events")
+        os.makedirs(current_folder, exist_ok=True)
+        os.makedirs(archive_folder, exist_ok=True)
+
         if incremental:
-            series = self._load_existing_series(dst_folder)
+            series = self._load_existing_series(current_folder)
+            # If the loaded series is finalised, archive it and start fresh
+            if series.get("series", {}).get("is_final", False):
+                self._archive_series(current_folder, archive_folder)
+                print("Existing series is final — archived. Starting new series.\n")
+                series = {}
         else:
             series = {}
 
@@ -356,10 +376,10 @@ class PAGASAHROParser:
         # Recompute series metadata from the full advisory set
         series = self._build_series(advisories, source_log, series_failures)
 
-        # Derive output path from series start datetime
+        # Derive output path from series start datetime; always write to current_event/
         sorted_keys  = sorted(advisories.keys())
         start_str    = self._dt_to_filename_prefix(sorted_keys[0])
-        output_path  = os.path.join(dst_folder, f"pagasa-hro-{start_str}.json")
+        output_path  = os.path.join(current_folder, f"pagasa-hro-{start_str}.json")
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(series, f, indent=2, ensure_ascii=False)
@@ -431,15 +451,27 @@ class PAGASAHROParser:
             "advisories": dict(sorted(advisories.items())),
         }
 
-    def _load_existing_series(self, dst_folder: str) -> Dict[str, Any]:
+    def _archive_series(self, current_folder: str, archive_folder: str) -> None:
         """
-        Find and load the most recently modified JSON in dst_folder.
+        Move all JSON files from current_event/ to past_events/.
+        Called when a finalised series is detected on incremental load.
+        """
+        for fname in os.listdir(current_folder):
+            if fname.endswith(".json"):
+                src  = os.path.join(current_folder, fname)
+                dest = os.path.join(archive_folder, fname)
+                os.rename(src, dest)
+                print(f"  Archived: {fname} → past_events/")
+
+    def _load_existing_series(self, current_folder: str) -> Dict[str, Any]:
+        """
+        Find and load the most recently modified JSON in current_event/.
         Returns an empty dict if no JSON file exists yet (first run).
         """
         json_files = sorted(
             [
-                os.path.join(dst_folder, f)
-                for f in os.listdir(dst_folder)
+                os.path.join(current_folder, f)
+                for f in os.listdir(current_folder)
                 if f.endswith(".json")
             ],
             key=os.path.getmtime,
@@ -773,7 +805,7 @@ def main():
 
     Full mode (default):
         python extract_hro.py --src ./pdfs --dst ./output
- 
+
     Incremental mode:
         python extract_hro.py --src ./pdfs --dst ./output --incremental
                                        --processed ./processed
