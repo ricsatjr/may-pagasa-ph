@@ -407,6 +407,10 @@ class PAGASAHROParser:
 
         print(f"\nOutput written to: {output_path}")
         self._print_summary(series)
+
+        # Rebuild display HTML with updated data
+        self._build_display(dst_folder)
+
         return series
 
     # ------------------------------------------------------------------
@@ -831,6 +835,31 @@ class PAGASAHROParser:
     # ------------------------------------------------------------------
     # Output helpers
     # ------------------------------------------------------------------
+
+    def _build_display(self, dst_folder: str) -> None:
+        """
+        Rebuild display/site/index.html with the latest series data.
+        Calls build_display.py from src/utils/ if it exists; silently
+        skips if the script is not found (e.g. display not yet set up).
+        """
+        build_script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "utils", "build_display.py"
+        )
+        if not os.path.exists(build_script):
+            return
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, build_script, "--jsons", dst_folder],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                print(f"Display rebuilt: {result.stdout.strip()}")
+            else:
+                print(f"Display build warning: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"Display build skipped: {e}")
 
     def _print_summary(self, series: Dict[str, Any]) -> None:
         """Print a human-readable series summary to stdout."""
