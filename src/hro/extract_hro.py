@@ -14,8 +14,8 @@ Output filename is auto-generated from the series start datetime:
     pagasa-hro-YYYYMMDD_HHMM.json
 
 Usage:
-    python pagasa_hro_extractor.py                        # default folders
-    python pagasa_hro_extractor.py --src ./pdfs --dst ./output
+    python extract_hro.py                        # default folders
+    python extract_hro.py --src ./pdfs --dst ./output
 
 Known limitations (see series.extraction.issues in output JSON for per-run details):
     - Image-only PDFs (no text layer) cannot be parsed
@@ -770,10 +770,10 @@ def main():
     CLI entry point.
 
     Full mode (default):
-        python pagasa_hro_extractor.py --src ./pdfs --dst ./output
-
+        python extract_hro.py --src ./pdfs --dst ./output
+ 
     Incremental mode:
-        python pagasa_hro_extractor.py --src ./pdfs --dst ./output --incremental
+        python extract_hro.py --src ./pdfs --dst ./output --incremental
                                        --processed ./processed
     """
     ap = argparse.ArgumentParser(
