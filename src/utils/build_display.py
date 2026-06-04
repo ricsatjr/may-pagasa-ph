@@ -3,9 +3,9 @@
 build_display.py
 ================
 Reads the current HRO series JSON and location reference data, then writes
-display/site/index.html with the data embedded as JavaScript variables.
+docs/site/index.html with the data embedded as JavaScript variables.
 
-This allows display/site/index.html to be opened directly from the filesystem
+This allows docs/site/index.html to be opened directly from the filesystem
 (file://) without requiring a local HTTP server.
 
 Called automatically by extract_hro.py after every successful parse, or
@@ -31,11 +31,44 @@ from datetime import datetime, timezone, timedelta
 
 _HERE         = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT    = os.path.abspath(os.path.join(_HERE, "..", ".."))
-_DISPLAY_DIR  = os.path.join(_REPO_ROOT, "display", "site")
+_DISPLAY_DIR  = os.path.join(_REPO_ROOT, "docs", "site")
 _OUTPUT_HTML  = os.path.join(_DISPLAY_DIR, "index.html")
 _LOCATIONS    = os.path.join(_HERE, "locations.json")
 
 PST = timezone(timedelta(hours=8))
+
+
+def _git_push(commit_msg: str) -> None:
+    """
+    Stage docs/site/index.html, commit, and push to origin.
+    Runs from the repo root. Skips gracefully if git is not available
+    or if there are no changes to commit.
+    """
+    import subprocess
+
+    def run(cmd):
+        return subprocess.run(
+            cmd, cwd=_REPO_ROOT, capture_output=True, text=True
+        )
+
+    # Check if there are changes to commit
+    status = run(["git", "status", "--porcelain", "docs/site/index.html"])
+    if not status.stdout.strip():
+        print("Git: no changes to docs/site/index.html — skipping push.")
+        return
+
+    cmds = [
+        ["git", "add", "docs/site/index.html"],
+        ["git", "commit", "-m", commit_msg],
+        ["git", "push"],
+    ]
+    for cmd in cmds:
+        result = run(cmd)
+        if result.returncode != 0:
+            print(f"Git error ({' '.join(cmd)}): {result.stderr.strip()}")
+            return
+        print(f"  {result.stdout.strip() or ' '.join(cmd)}")
+    print("Git: pushed docs/site/index.html to origin.")
 
 
 def _load_locations() -> dict:
@@ -58,16 +91,17 @@ def _find_past_json(jsons_root: str) -> str | None:
     return files[-1] if files else None
 
 
-def build(jsons_root: str, explicit_json: str = None) -> None:
+def build(jsons_root: str, explicit_json: str = None, push: bool = False) -> None:
     """
     Main build routine.
 
     Loads the current or most recent series JSON and location data,
-    then writes display/site/index.html with both embedded.
+    then writes docs/site/index.html with both embedded.
 
     Args:
         jsons_root:    Root of jsons/ directory (contains current_event/ and past_events/)
         explicit_json: If provided, use this JSON path directly.
+        push:          If True, git add + commit + push after writing HTML.
     """
     # ── Load HRO data ──
     is_past = False
@@ -96,6 +130,12 @@ def build(jsons_root: str, explicit_json: str = None) -> None:
     with open(_OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"Built: {_OUTPUT_HTML}")
+
+    if push:
+        series_meta = hro_data.get("series", {})
+        started     = series_meta.get("started", "")[:10]   # YYYY-MM-DD
+        msg = f"Update HRO display [{started}]" if started else "Update HRO display"
+        _git_push(msg)
 
 
 def _render_html(hro_data: dict, locations: dict, is_past: bool) -> str:
@@ -893,7 +933,7 @@ populateRegions();
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Embed HRO JSON data into display/site/index.html."
+        description="Embed HRO JSON data into docs/site/index.html."
     )
     ap.add_argument(
         '--jsons', default=None,
@@ -904,10 +944,15 @@ def main():
         '--json', default=None,
         help="Explicit JSON file path to use directly.",
     )
+    ap.add_argument(
+        '--push', action='store_true',
+        help="After building, git add + commit + push docs/site/index.html "
+             "to trigger a GitHub Pages redeploy.",
+    )
     args = ap.parse_args()
 
     jsons_root = args.jsons or os.path.join(_REPO_ROOT, "data", "hro", "jsons")
-    build(jsons_root=jsons_root, explicit_json=args.json)
+    build(jsons_root=jsons_root, explicit_json=args.json, push=args.push)
 
 
 if __name__ == "__main__":
