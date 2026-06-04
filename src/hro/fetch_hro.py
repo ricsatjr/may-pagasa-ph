@@ -74,7 +74,7 @@ def _fetch_directory(url: str) -> List[Tuple[str, Optional[datetime]]]:
     because the Apache listing puts filename and timestamp on the same line
     as plain text, not in separate tags.
 
-    Returns list of (filename, upload_datetime_gmt_aware) tuples.
+    Returns list of (display_filename, url_encoded_href, upload_datetime_gmt) tuples.
     The timestamp is the server upload time (GMT), not the bulletin issue time.
     Raises urllib.error.URLError on network failure.
     """
@@ -82,15 +82,19 @@ def _fetch_directory(url: str) -> List[Tuple[str, Optional[datetime]]]:
     with urllib.request.urlopen(req, timeout=30) as resp:
         html = resp.read().decode("utf-8", errors="replace")
 
-    entries: List[Tuple[str, Optional[datetime]]] = []
+    # Each entry: (display_filename, url_encoded_href, upload_datetime_gmt)
+    # href is already URL-encoded by the server (e.g. Advisory%2323.pdf)
+    # and must be used as-is for the download URL.
+    entries: List[Tuple[str, str, Optional[datetime]]] = []
     for m in _DIR_ROW_RE.finditer(html):
-        fname    = m.group(2).strip()
+        href     = m.group(1).strip()   # URL-encoded, safe for direct use in URL
+        fname    = m.group(2).strip()   # display name, used as local filename
         date_str = m.group(3).strip()
         try:
             dt = datetime.strptime(date_str, "%d-%b-%Y %H:%M").replace(tzinfo=GMT)
-            entries.append((fname, dt))
+            entries.append((fname, href, dt))
         except ValueError:
-            entries.append((fname, None))
+            entries.append((fname, href, None))
 
     return entries
 
@@ -224,14 +228,14 @@ def fetch(
     # ── Filter by Last-Modified > cutoff ──
     # Directory timestamps are GMT; convert to PST for comparison
     to_download = []
-    for fname, last_modified_gmt in entries:
+    for fname, href, last_modified_gmt in entries:
         if last_modified_gmt is None:
             # No timestamp parsed — skip to be safe
             print(f"  [skip] {fname}  (no timestamp found)")
             continue
         last_modified_pst = last_modified_gmt.astimezone(PST)
         if last_modified_pst > cutoff:
-            to_download.append((fname, last_modified_pst))
+            to_download.append((fname, href, last_modified_pst))
 
     if not to_download:
         print("No new advisories found.")
@@ -241,7 +245,7 @@ def fetch(
 
     # ── Download ──
     downloaded = 0
-    for fname, last_modified_pst in sorted(to_download, key=lambda x: x[1]):
+    for fname, href, last_modified_pst in sorted(to_download, key=lambda x: x[2]):
 
         # Skip if already in pipeline
         if _already_seen(fname, new_folder, processed_folder, failed_folder):
@@ -254,9 +258,11 @@ def fetch(
             print(f"  [dry-run] {fname}  ({ts_str})")
             continue
 
+        # Use href (already URL-encoded) for the download URL;
+        # use display fname as the local filename
         dest = os.path.join(new_folder, fname)
         try:
-            _download(f"{src_url.rstrip('/')}/{fname}", dest)
+            _download(f"{src_url.rstrip('/')}/{href}", dest)
             print(f"  ✓ {fname}  ({ts_str})")
             downloaded += 1
         except urllib.error.URLError as e:
