@@ -401,6 +401,10 @@ class PAGASAHROParser:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(series, f, indent=2, ensure_ascii=False)
 
+        # Write fetch_state.json so fetch_hro.py knows the latest parsed datetime
+        # regardless of whether the series JSON has been archived or not
+        self._write_fetch_state(current_folder, sorted_keys[-1])
+
         print(f"\nOutput written to: {output_path}")
         self._print_summary(series)
         return series
@@ -468,6 +472,40 @@ class PAGASAHROParser:
             "advisories": dict(sorted(advisories.items())),
         }
 
+    def _write_fetch_state(self, current_folder: str, latest_dt: str) -> None:
+        """
+        Write fetch_state.json to current_event/ after every successful parse,
+        but only if latest_dt is strictly later than what is already stored.
+
+        This guards against out-of-order PDF processing overwriting a more
+        recent cutoff with an earlier one, which would cause fetch_hro.py to
+        re-download already-processed files.
+
+        Args:
+            current_folder: Path to current_event/ directory.
+            latest_dt:      ISO 8601 datetime of the most recently parsed advisory.
+        """
+        path = os.path.join(current_folder, "fetch_state.json")
+
+        # Read existing state to compare datetimes before overwriting
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    existing = json.load(f)
+                existing_dt = existing.get("latest_bulletin_datetime", "")
+                if existing_dt and existing_dt >= latest_dt:
+                    # Existing state is equal or more recent — do not overwrite
+                    return
+            except (json.JSONDecodeError, OSError):
+                pass   # corrupt or unreadable — overwrite is safe
+
+        state = {
+            "latest_bulletin_datetime": latest_dt,
+            "updated_at": _iso(datetime.now(tz=PST)),
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+
     def _archive_series(self, current_folder: str, archive_folder: str) -> None:
         """
         Move all JSON files from current_event/ to past_events/.
@@ -489,7 +527,7 @@ class PAGASAHROParser:
             [
                 os.path.join(current_folder, f)
                 for f in os.listdir(current_folder)
-                if f.endswith(".json")
+                if f.endswith(".json") and f.startswith("pagasa-")
             ],
             key=os.path.getmtime,
         )
