@@ -258,6 +258,10 @@ class PAGASAHROParser:
                 current_event/  active series JSON
                 past_events/    completed series JSONs
 
+            Failed PDFs are moved to a 'failed/' folder that is a sibling
+            of src_folder (e.g. if src=data/hro/pdfs/new, failed PDFs go
+            to data/hro/pdfs/failed/).
+
         Args:
             src_folder:        Folder containing incoming advisory PDFs.
             dst_folder:        Folder for JSON output.
@@ -279,6 +283,10 @@ class PAGASAHROParser:
         archive_folder = os.path.join(dst_folder, "past_events")
         os.makedirs(current_folder, exist_ok=True)
         os.makedirs(archive_folder, exist_ok=True)
+
+        # Failed PDFs are moved to a sibling of src_folder named 'failed'
+        failed_folder = os.path.join(os.path.dirname(src_folder), "failed")
+        os.makedirs(failed_folder, exist_ok=True)
 
         if incremental:
             series = self._load_existing_series(current_folder)
@@ -338,7 +346,10 @@ class PAGASAHROParser:
                         else "missing advisory number or datetime"
                     )
                     series_failures.append({"source_file": original_fname, "reason": reason})
-                    print(f"  ✗ {original_fname}  [{reason}]")
+                    # Move unreadable PDF to failed/ so src_folder stays clean
+                    if incremental:
+                        os.rename(path, os.path.join(failed_folder, original_fname))
+                    print(f"  ✗ {original_fname}  [{reason}] → failed/")
                     continue
 
                 dt_key       = self._extract_datetime_from_raw(result["raw_datetime"])
@@ -367,7 +378,13 @@ class PAGASAHROParser:
 
             except Exception as exc:
                 series_failures.append({"source_file": original_fname, "reason": str(exc)})
-                print(f"  ✗ {original_fname}  [exception: {exc}]")
+                # Move to failed/ so it doesn't block future incremental runs
+                if incremental:
+                    try:
+                        os.rename(path, os.path.join(failed_folder, original_fname))
+                    except OSError:
+                        pass   # file may have already moved or been deleted
+                print(f"  ✗ {original_fname}  [exception: {exc}] → failed/")
 
         if not advisories:
             print("\nNo advisories successfully parsed.")
