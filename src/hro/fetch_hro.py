@@ -29,6 +29,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import json
 import argparse
@@ -36,7 +37,6 @@ import subprocess
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
-from html.parser import HTMLParser
 from typing import List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -56,74 +56,43 @@ _EXTRACTOR   = os.path.join(_HERE, "extract_hro.py")
 # Directory listing parser
 # ---------------------------------------------------------------------------
 
-class _DirectoryParser(HTMLParser):
-    """
-    Parses an Apache-style HTML directory listing into a list of
-    (filename, last_modified_gmt) tuples.
-
-    Only rows containing PDF files are captured. Last-Modified strings
-    from the directory are in the format: 'DD-Mon-YYYY HH:MM' (GMT).
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.entries: List[Tuple[str, Optional[datetime]]] = []
-        self._in_link = False
-        self._current_href = ""
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "a":
-            attrs_dict = dict(attrs)
-            href = attrs_dict.get("href", "")
-            if href.lower().endswith(".pdf"):
-                self._in_link  = True
-                self._current_href = href
-
-    def handle_endtag(self, tag):
-        if tag == "a":
-            self._in_link = False
-
-    def handle_data(self, data):
-        # The Last-Modified date appears as text in the same <td> row
-        # after the filename link — we capture it by checking for the
-        # date pattern adjacent to an already-seen PDF href
-        stripped = data.strip()
-        if not stripped:
-            return
-
-        # Try to parse as a directory date string: "13-Jun-2026 09:40"
-        try:
-            dt = datetime.strptime(stripped, "%d-%b-%Y %H:%M")
-            dt = dt.replace(tzinfo=GMT)   # directory timestamps are GMT
-            # Attach to the most recent PDF entry that has no date yet
-            for i in range(len(self.entries) - 1, -1, -1):
-                fname, existing_dt = self.entries[i]
-                if existing_dt is None:
-                    self.entries[i] = (fname, dt)
-                    break
-        except ValueError:
-            pass
-
-        # Capture the filename from the link text
-        if self._in_link and stripped.lower().endswith(".pdf"):
-            self.entries.append((stripped, None))
-            self._in_link = False
+# Regex to parse Apache directory listing rows.
+# Matches: <a href="...pdf">filename.pdf</a>   DD-Mon-YYYY HH:MM   size
+# The timestamp is in GMT (server time).
+_DIR_ROW_RE = re.compile(
+    r'href="([^"]+\.pdf)"[^>]*>([^<]+\.pdf)</a>\s+'
+    r'(\d{2}-\w{3}-\d{4}\s+\d{2}:\d{2})',
+    re.IGNORECASE,
+)
 
 
 def _fetch_directory(url: str) -> List[Tuple[str, Optional[datetime]]]:
     """
     Fetch the PAGASA directory listing and return parsed PDF entries.
 
-    Returns list of (filename, last_modified_gmt_aware) tuples.
+    Parses the raw HTML with a regex rather than an event-driven HTML parser
+    because the Apache listing puts filename and timestamp on the same line
+    as plain text, not in separate tags.
+
+    Returns list of (filename, upload_datetime_gmt_aware) tuples.
+    The timestamp is the server upload time (GMT), not the bulletin issue time.
     Raises urllib.error.URLError on network failure.
     """
     req = urllib.request.Request(url, headers={"User-Agent": "fetch_hro/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         html = resp.read().decode("utf-8", errors="replace")
 
-    parser = _DirectoryParser()
-    parser.feed(html)
-    return parser.entries
+    entries: List[Tuple[str, Optional[datetime]]] = []
+    for m in _DIR_ROW_RE.finditer(html):
+        fname    = m.group(2).strip()
+        date_str = m.group(3).strip()
+        try:
+            dt = datetime.strptime(date_str, "%d-%b-%Y %H:%M").replace(tzinfo=GMT)
+            entries.append((fname, dt))
+        except ValueError:
+            entries.append((fname, None))
+
+    return entries
 
 
 # ---------------------------------------------------------------------------
