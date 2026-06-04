@@ -409,7 +409,9 @@ class PAGASAHROParser:
         self._print_summary(series)
 
         # Rebuild display HTML with updated data
-        self._build_display(dst_folder)
+        # Pass push=True to auto-commit and push to GitHub Pages.
+        # Set to False if you prefer to push manually.
+        self._build_display(dst_folder, push=True)
 
         return series
 
@@ -836,11 +838,16 @@ class PAGASAHROParser:
     # Output helpers
     # ------------------------------------------------------------------
 
-    def _build_display(self, dst_folder: str) -> None:
+    def _build_display(self, dst_folder: str, push: bool = False) -> None:
         """
-        Rebuild display/site/index.html with the latest series data.
+        Rebuild docs/site/index.html with the latest series data.
         Calls build_display.py from src/utils/ if it exists; silently
         skips if the script is not found (e.g. display not yet set up).
+
+        Args:
+            dst_folder: Root jsons/ folder passed to build_display.py.
+            push:       If True, forward --push to build_display.py so it
+                        commits and pushes the updated HTML to GitHub Pages.
         """
         build_script = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -850,10 +857,10 @@ class PAGASAHROParser:
             return
         try:
             import subprocess
-            result = subprocess.run(
-                [sys.executable, build_script, "--jsons", dst_folder],
-                capture_output=True, text=True
-            )
+            cmd = [sys.executable, build_script, "--jsons", dst_folder]
+            if push:
+                cmd.append("--push")
+            result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 print(f"Display rebuilt: {result.stdout.strip()}")
             else:
