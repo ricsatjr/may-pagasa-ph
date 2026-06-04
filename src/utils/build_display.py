@@ -118,6 +118,7 @@ def _render_html(hro_data: dict, locations: dict, is_past: bool) -> str:
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
 :root {{
+  /* Dark theme (default) */
   --bg:          #0f1117;
   --surface:     #181c25;
   --surface2:    #1e2330;
@@ -142,6 +143,29 @@ def _render_html(hro_data: dict, locations: dict, is_past: bool) -> str:
   --font-mono:   'IBM Plex Mono', monospace;
   --radius:      6px;
   --radius-lg:   10px;
+}}
+
+/* Light / earthy theme */
+[data-theme="light"] {{
+  --bg:          #f5f0eb;
+  --surface:     #faf7f4;
+  --surface2:    #ede8e2;
+  --border:      #d5cdc4;
+  --text:        #3d3530;
+  --text-dim:    #8c7d72;
+  --text-bright: #1a1410;
+  --accent:      #7c5c3e;
+  --accent-dim:  #e8ddd4;
+
+  --red:         #c62828;
+  --red-bg:      #fde8e8;
+  --red-text:    #b71c1c;
+  --orange:      #bf360c;
+  --orange-bg:   #fbe9e7;
+  --orange-text: #bf360c;
+  --yellow:      #f57f17;
+  --yellow-bg:   #fffde7;
+  --yellow-text: #e65100;
 }}
 
 html, body {{
@@ -200,6 +224,20 @@ main {{
   width: 100%;
   margin: 0 auto;
 }}
+
+.theme-toggle {{
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  transition: border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}}
+.theme-toggle:hover {{ border-color: var(--accent); color: var(--accent); }}
 
 footer {{
   border-top: 1px solid var(--border);
@@ -394,6 +432,14 @@ select option {{ background: var(--surface2); }}
 /* ── Table System Section ── */
 .system-section {{ display: flex; flex-direction: column; gap: 8px; }}
 
+.table-title-row {{
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}}
+
 .system-label {{
   font-size: 11px;
   text-transform: uppercase;
@@ -401,8 +447,12 @@ select option {{ background: var(--surface2); }}
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-weight: 600;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
+}}
+
+.table-date-range {{
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
 }}
 
 /* ── Data Table ── */
@@ -413,7 +463,7 @@ select option {{ background: var(--surface2); }}
 }}
 
 .hro-table th {{
-  text-align: left;
+  text-align: center;
   padding: 8px 10px;
   font-family: var(--font-mono);
   font-weight: 600;
@@ -446,7 +496,10 @@ select option {{ background: var(--surface2); }}
   font-weight: 400;
   color: var(--text-bright);
   white-space: nowrap;
+  text-align: left;
 }}
+
+.hro-table th:first-child {{ text-align: left; }}
 
 .period-cell {{
   text-align: center;
@@ -500,6 +553,7 @@ select option {{ background: var(--surface2); }}
     <h1>PAGASA Weather Advisory Viewer</h1>
     <p>Heavy Rainfall Outlook — location filter</p>
   </div>
+  <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">☀︎</button>
 </header>
 
 <main>
@@ -535,22 +589,28 @@ const IS_PAST      = {is_past_js};
 
 // ── Helpers ────────────────────────────────────────────────────
 
-function fmtDt(iso) {{
-  // Format ISO datetime as "Jun 4, 5PM" or "Dec 31 2025, 11PM"
-  // Year shown only when different from current year or when crossing year boundary
+function fmtDt(iso, showYear = false) {{
+  // Format ISO datetime. Year shown only when showYear=true.
   const d = new Date(iso);
-  const now = new Date();
-  const mo = d.toLocaleString('en-PH', {{ month: 'short', timeZone: 'Asia/Manila' }});
+  const mo  = d.toLocaleString('en-PH', {{ month: 'short', timeZone: 'Asia/Manila' }});
   const day = d.toLocaleString('en-PH', {{ day: 'numeric', timeZone: 'Asia/Manila' }});
-  const hr = d.toLocaleString('en-PH', {{ hour: 'numeric', hour12: true, timeZone: 'Asia/Manila' }})
-              .replace(':00', '').replace(' ', '');
-  const yr = d.getFullYear();
-  const showYear = yr !== now.getFullYear();
+  const yr  = d.toLocaleString('en-PH', {{ year: 'numeric', timeZone: 'Asia/Manila' }});
+  const hr  = d.toLocaleString('en-PH', {{ hour: 'numeric', hour12: true, timeZone: 'Asia/Manila' }})
+               .replace(':00', '').replace(' ', '');
   return showYear ? `${{mo}} ${{day}} ${{yr}}, ${{hr}}` : `${{mo}} ${{day}}, ${{hr}}`;
 }}
 
 function fmtPeriodHeader(period) {{
+  // Period headers: no year (kept concise); year appears in table title
   return `${{fmtDt(period.valid_from)}} → ${{fmtDt(period.valid_to)}}`;
+}}
+
+function fmtTableTitle(periods) {{
+  // Table title shows the full date range with year
+  if (!periods.length) return '';
+  const from = fmtDt(periods[0].valid_from, true);
+  const to   = fmtDt(periods[periods.length - 1].valid_to, true);
+  return `${{from}} — ${{to}}`;
 }}
 
 function chipClass(cat) {{
@@ -567,25 +627,36 @@ function chipLabel(cat) {{
   return '';
 }}
 
-// Get chip(s) for a location in a period
-// Returns array of {{cat, locString}} for matching locations
+// Extract modifier prefix from a location string, e.g. "northern Benguet" → "northern"
+function extractModifier(locString, province) {{
+  const base = locString.trim();
+  if (base.toLowerCase() === province.toLowerCase()) return null;
+  // Modifier is the part before the province name
+  const idx = base.toLowerCase().lastIndexOf(province.toLowerCase());
+  return idx > 0 ? base.slice(0, idx).trim() : null;
+}}
+
+// Get chip(s) for a province in a period.
+// Returns array of {{cat, modifier}} where modifier is null when none.
+// chip shows threshold label; modifier shown as suffix when present.
 function getMatches(period, targetProvince, allProvinces) {{
   const cats = ['above_200mm', '100_to_200mm', '50_to_100mm'];
   const results = [];
   for (const cat of cats) {{
     const locs = period.rainfall_categories[cat] || [];
     if (allProvinces) {{
-      // Region mode: return per-province chips
-      for (const loc of locs) {{
-        if (allProvinces.some(p => loc === p || loc.includes(p))) {{
-          results.push({{ cat, locString: loc }});
+      // Region mode — match each province row
+      for (const prov of allProvinces) {{
+        const matched = locs.filter(loc => loc === prov || loc.includes(prov));
+        for (const loc of matched) {{
+          results.push({{ cat, modifier: extractModifier(loc, prov), province: prov }});
         }}
       }}
     }} else {{
-      // Province mode: match this specific province
+      // Province mode — match this specific province
       const matched = locs.filter(loc => loc === targetProvince || loc.includes(targetProvince));
       for (const loc of matched) {{
-        results.push({{ cat, locString: loc }});
+        results.push({{ cat, modifier: extractModifier(loc, targetProvince), province: targetProvince }});
       }}
     }}
   }}
@@ -667,7 +738,7 @@ function render() {{
 
   // Updated at
   const latestKey = keys[0];
-  html += `<div class="updated-at">Latest bulletin: ${{fmtDt(latestKey)}}</div>`;
+  html += `<div class="updated-at">Latest bulletin: ${{fmtDt(latestKey, true)}}</div>`;
 
   // Advisory cards
   html += '<div class="timeline">';
@@ -702,7 +773,7 @@ function renderCard(adv, key, isLatest, region, province) {{
   <div class="advisory-card${{isFinal ? ' is-final' : ''}}" style="animation-delay:${{0}}ms">
     <div class="card-header ${{openClass}}" onclick="toggleCard(this)">
       <span class="adv-number">ADV-${{String(adv.number).padStart(3,'0')}}</span>
-      <span class="adv-datetime">${{fmtDt(key)}}</span>
+      <span class="adv-datetime">${{fmtDt(key, true)}}</span>
       <span class="adv-systems">${{systemTags}}</span>
       ${{finalBadge}}
       <span class="toggle-icon">▾</span>
@@ -716,13 +787,24 @@ function renderCard(adv, key, isLatest, region, province) {{
     // Final advisory with no table
     html += `<div class="no-match">This is the final advisory. No further heavy rainfall outlook issued.</div>`;
   }} else {{
+    const multiTable = tableKeys.length > 1;
     tableKeys.forEach(tk => {{
       const tbl     = tables[tk];
       const sysName = tbl.name || tbl.weather_system || 'Weather System';
       const periods = Object.values(tbl.forecast_periods || {{}});
+      const title   = fmtTableTitle(periods);
 
-      html += `<div class="system-section">
-        <div class="system-label">${{sysName}}</div>`;
+      html += `<div class="system-section">`;
+
+      // Table title block: system name (only for multi-table) + date range with year
+      html += `<div class="table-title-row">`;
+      if (multiTable) {{
+        html += `<span class="system-label">${{sysName}}</span>`;
+      }}
+      if (title) {{
+        html += `<span class="table-date-range">${{title}}</span>`;
+      }}
+      html += `</div>`;
 
       if (!periods.length) {{
         html += `<div class="no-match">No forecast periods.</div>`;
@@ -739,31 +821,36 @@ function renderCard(adv, key, isLatest, region, province) {{
 }}
 
 function renderTable(periods, region, province, allProvinces) {{
-  const showProvinceCol = !province; // region mode: show province column
-  const targetProvince  = province || null;
-  const rows = showProvinceCol ? allProvinces : [targetProvince];
+  const showProvinceCol = !province;
+  const rows = showProvinceCol ? allProvinces : [province];
 
   let html = `<table class="hro-table"><thead><tr>`;
-  if (showProvinceCol) html += `<th>Province</th>`;
+  if (showProvinceCol) html += `<th>Province</th>`;   // left-aligned by default
   periods.forEach(p => {{
-    html += `<th>
+    html += `<th style="text-align:center">
       <span class="period-dates">${{fmtPeriodHeader(p)}}</span>
     </th>`;
   }});
   html += `</tr></thead><tbody>`;
 
   rows.forEach(prov => {{
+    // Collect all matches across all periods for this province
+    const periodMatches = periods.map(period => getMatches(period, prov, null)
+      .filter(m => m.province === prov || !showProvinceCol));
+
     html += `<tr>`;
     if (showProvinceCol) html += `<td class="province-cell">${{prov}}</td>`;
 
-    periods.forEach(period => {{
-      const matches = getMatches(period, prov, null);
+    periodMatches.forEach(matches => {{
       if (!matches.length) {{
         html += `<td class="period-cell"><span class="dash">—</span></td>`;
       }} else {{
-        const chips = matches.map(m =>
-          `<span class="chip ${{chipClass(m.cat)}}">${{m.locString}}</span>`
-        ).join('');
+        // Chip label: threshold value + optional modifier in parentheses
+        const chips = matches.map(m => {{
+          const label = chipLabel(m.cat);
+          const suffix = m.modifier ? ` (${{m.modifier}})` : '';
+          return `<span class="chip ${{chipClass(m.cat)}}">${{label}}${{suffix}}</span>`;
+        }}).join('');
         html += `<td class="period-cell"><div class="chips">${{chips}}</div></td>`;
       }}
     }});
@@ -780,7 +867,24 @@ function toggleCard(header) {{
   header.nextElementSibling.classList.toggle('open');
 }}
 
+function toggleTheme() {{
+  const root = document.documentElement;
+  const isLight = root.getAttribute('data-theme') === 'light';
+  root.setAttribute('data-theme', isLight ? 'dark' : 'light');
+  document.querySelector('.theme-toggle').textContent = isLight ? '☀︎' : '☾';
+  localStorage.setItem('hro-theme', isLight ? 'dark' : 'light');
+}}
+
 // ── Init ───────────────────────────────────────────────────────
+// Restore saved theme preference
+(function() {{
+  const saved = localStorage.getItem('hro-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  // Button label set after DOM ready
+  window.addEventListener('DOMContentLoaded', () => {{
+    document.querySelector('.theme-toggle').textContent = saved === 'light' ? '☾' : '☀︎';
+  }});
+}})();
 populateRegions();
 </script>
 </body>
