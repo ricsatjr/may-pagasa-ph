@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pdfplumber
-import location_reference as gazetteer
+from location_reference import is_known as _loc_is_known
 from location_reference import log_unresolved as _log_unresolved
 
 
