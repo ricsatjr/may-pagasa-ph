@@ -48,6 +48,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from location_reference import is_known as _loc_is_known
 from location_reference import log_unresolved as _log_unresolved
 
+# OCR fallback — imported lazily inside parse_advisory() to avoid
+# hard dependency when all PDFs have a text layer
+_OCR_AVAILABLE = None   # None = untested, True/False after first check
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -74,10 +78,11 @@ MONTH_MAP: Dict[str, int] = {
 
 # Rainfall category threshold patterns matched against first column of data rows;
 # order matters — more specific patterns first
+# Dash character class covers: hyphen, en-dash, em-dash (OCR may produce any of these)
 RAINFALL_PATTERNS: List[Tuple[str, re.Pattern]] = [
-    ("above_200mm",   re.compile(r'\(?>?\s*200\s*mm\)?',              re.IGNORECASE)),
-    ("100_to_200mm",  re.compile(r'\(?\s*100\s*[–\-]\s*200\s*mm\)?', re.IGNORECASE)),
-    ("50_to_100mm",   re.compile(r'\(?\s*50\s*[–\-]\s*100\s*mm\)?',  re.IGNORECASE)),
+    ("above_200mm",   re.compile(r'\(?>?\s*200\s*m\s*m\)?',                       re.IGNORECASE)),
+    ("100_to_200mm",  re.compile(r'\(?\s*100\s*[-\u2013\u2014]\s*200\s*m\s*m\)?', re.IGNORECASE)),
+    ("50_to_100mm",   re.compile(r'\(?\s*50\s*[-\u2013\u2014]\s*100\s*m\s*m\)?',  re.IGNORECASE)),
 ]
 
 # Location modifier prefixes; longer phrases precede shorter to avoid partial matches
@@ -194,7 +199,9 @@ class PAGASAHROParser:
             text = page.extract_text() or ""
 
             if not text.strip():
-                return None   # image-only PDF; caller logs the failure
+                # No text layer — attempt OCR fallback before giving up
+                return self._parse_via_ocr(pdf_path, page)
+
 
             advisory_num  = self._extract_advisory_number(text)
             datetime_info = self._extract_datetime(text)
@@ -579,6 +586,95 @@ class PAGASAHROParser:
     # ------------------------------------------------------------------
     # PDF-level extraction helpers
     # ------------------------------------------------------------------
+
+    def _parse_via_ocr(
+        self,
+        pdf_path: str,
+        page,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fallback parser for flattened/image-only PDFs with no text layer.
+
+        Extracts the page image, runs Tesseract OCR, reconstructs the table
+        structure using coordinate-based clustering, then feeds the result
+        into the standard _parse_table() pipeline.
+
+        Also attempts to extract advisory metadata (number, datetime) from
+        the raw OCR text before table reconstruction.
+
+        Returns the same advisory dict as parse_advisory(), or None if OCR
+        also fails.
+        """
+        global _OCR_AVAILABLE
+
+        # Check OCR availability once and cache the result
+        if _OCR_AVAILABLE is None:
+            try:
+                from ocr_fallback import extract_via_ocr as _ocr_fn
+                _OCR_AVAILABLE = True
+            except ImportError:
+                _OCR_AVAILABLE = False
+
+        if not _OCR_AVAILABLE:
+            print("    OCR fallback unavailable (pdf2image/pytesseract not installed)")
+            return None
+
+        from ocr_fallback import extract_via_ocr as _ocr_fn
+        print(f"    No text layer detected — attempting OCR fallback …")
+
+        advisory_warnings: List[Dict[str, str]] = []
+
+        try:
+            ocr_result = _ocr_fn(pdf_path)
+            raw_tables  = ocr_result["tables"]
+            header_text = ocr_result["header_text"]
+            advisory_warnings.extend(ocr_result["warnings"])
+        except Exception as exc:
+            print(f"    OCR failed: {exc}")
+            return None
+
+        if not raw_tables:
+            print("    OCR returned no tables.")
+            return None
+
+        # Use header_text for metadata — much cleaner than mining table cells
+        advisory_num  = self._extract_advisory_number(header_text)
+        datetime_info = self._extract_datetime(header_text)
+        is_final      = self._detect_final(header_text, os.path.basename(pdf_path))
+
+        if advisory_num == -1 or datetime_info["iso_datetime"] == "Unknown":
+            print("    OCR: could not extract advisory number or datetime.")
+            return None
+
+        issue_dt = datetime.fromisoformat(
+            datetime_info["iso_datetime"].replace("+08:00", "")
+        ).replace(tzinfo=PST)
+
+        parsed_tables: Dict[str, Any] = {}
+        for i, raw_table in enumerate(raw_tables, start=1):
+            parsed, tbl_warnings = self._parse_table(raw_table, issue_dt)
+            if parsed:
+                parsed_tables[str(i)] = parsed
+            for w in tbl_warnings:
+                w["table"] = str(i)
+                advisory_warnings.append(w)
+
+        # Tag all warnings as coming from OCR path
+        for w in advisory_warnings:
+            w.setdefault("via", "ocr")
+
+        record: Dict[str, Any] = {
+            "number":       advisory_num,
+            "is_final":     is_final,
+            "raw_datetime": datetime_info["raw_datetime"],
+            "tables":       parsed_tables,
+            "ocr":          True,   # flag so downstream knows this was OCR-extracted
+        }
+        if advisory_warnings:
+            record["warnings"] = advisory_warnings
+
+        print(f"    OCR fallback succeeded: ADV-{advisory_num:03d}")
+        return record
 
     def _extract_advisory_number(self, text: str) -> int:
         """Extract the advisory sequence number. Returns -1 if not found."""
