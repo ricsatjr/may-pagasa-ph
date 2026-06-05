@@ -78,11 +78,14 @@ MONTH_MAP: Dict[str, int] = {
 
 # Rainfall category threshold patterns matched against first column of data rows;
 # order matters — more specific patterns first
-# Dash character class covers: hyphen, en-dash, em-dash (OCR may produce any of these)
+# Patterns ordered most-specific first to avoid false matches.
+# above_200mm anchored to start of string (or open paren) to avoid
+# matching '200' inside '100-200mm'.
+# Dash class covers hyphen, en-dash, em-dash (OCR may produce any).
 RAINFALL_PATTERNS: List[Tuple[str, re.Pattern]] = [
-    ("above_200mm",   re.compile(r'\(?>?\s*200\s*m\s*m\)?',                       re.IGNORECASE)),
     ("100_to_200mm",  re.compile(r'\(?\s*100\s*[-\u2013\u2014]\s*200\s*m\s*m\)?', re.IGNORECASE)),
     ("50_to_100mm",   re.compile(r'\(?\s*50\s*[-\u2013\u2014]\s*100\s*m\s*m\)?',  re.IGNORECASE)),
+    ("above_200mm",   re.compile(r'(?:^|\()\s*>?\s*200\s*m\s*m\)?',               re.IGNORECASE)),
 ]
 
 # Location modifier prefixes; longer phrases precede shorter to avoid partial matches
@@ -687,14 +690,22 @@ class PAGASAHROParser:
 
         Returns dict with 'raw_datetime' (original string) and 'iso_datetime'
         (PST / +08:00). Both are 'Unknown' if parsing fails.
+
+        Handles minor OCR artefacts:
+            - Time separator misread as period (e.g. '5.00 AM') → normalised to colon
+            - Year with one extra digit (e.g. '20266') → truncated to 4 digits
         """
-        pattern = r'Issued at:\s*(\d{1,2}:\d{2}\s*[AP]M),\s*(\d{1,2})\s+(\w+)\s+(\d{4})'
+        pattern = r'Issued at:\s*(\d{1,2}[:\.]\d{2}\s*[AP]M),?\s*(\d{1,2})\s+(\w+)\s+(\d{4,5})'
         m = re.search(pattern, text, re.IGNORECASE)
         if not m:
             return {"raw_datetime": "Unknown", "iso_datetime": "Unknown"}
 
-        time_str, day, month_str, year = m.groups()
-        raw = f"{time_str}, {day} {month_str} {year}"
+        time_str, day, month_str, year_raw = m.groups()
+        # Normalise time separator: replace period with colon if needed
+        time_str = time_str.replace('.', ':')
+        # Truncate year to 4 digits (guards against stray extra OCR digit)
+        year = year_raw[:4]
+        raw  = f"{time_str}, {day} {month_str} {year}"
 
         try:
             time_obj  = datetime.strptime(time_str.strip(), "%I:%M %p")
