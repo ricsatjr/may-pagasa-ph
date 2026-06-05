@@ -197,19 +197,30 @@ def _ocr_header(image, table_top_y: int, padding: int = 10) -> str:
     Args:
         image:        Full-page RGB numpy array.
         table_top_y:  Y-coordinate of the topmost table border.
-        padding:      Extra pixels above table_top_y to include.
+        padding:      Pixels above table_top_y to exclude (avoids border noise).
 
     Returns:
         Raw OCR text of the header region.
     """
-    _, _, pytesseract, _ = _import_deps()
+    cv2, np, pytesseract, _ = _import_deps()
 
-    header_crop = image[0: max(0, table_top_y - padding), :]
-    if header_crop.size == 0:
-        return ""
-
-    text = pytesseract.image_to_string(header_crop, config='--psm 6 --oem 3')
-    return text.strip()
+    # Try multiple crop heights to find one that includes 'Issued at:' cleanly.
+    # The line may sit very close to the table border in some bulletins.
+    best_text = ""
+    for extra in (0, 20, 40):
+        crop_bottom = max(0, table_top_y - padding + extra)
+        header_crop = image[0:crop_bottom, :].copy()
+        if header_crop.size == 0:
+            continue
+        # Whiten the bottom 6px to reduce table border line noise on the crop edge
+        if header_crop.shape[0] > 6:
+            header_crop[-6:, :] = 255
+        text = pytesseract.image_to_string(header_crop, config='--psm 6 --oem 3').strip()
+        if re.search(r'issued at', text, re.IGNORECASE):
+            return text   # found a clean read containing Issued at line
+        if len(text) > len(best_text):
+            best_text = text
+    return best_text
 
 
 # ---------------------------------------------------------------------------
